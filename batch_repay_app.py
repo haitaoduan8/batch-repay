@@ -4,6 +4,7 @@ import json
 import csv
 import time
 import threading
+import concurrent.futures
 import os
 import sys
 import certifi
@@ -476,130 +477,132 @@ class BatchRepayApp:
         
         threading.Thread(target=self._run_trial, daemon=True).start()
     
-    def _run_apply(self):
-        """执行划扣"""
-        self.is_running = True
-        self._clear_results()
-        
-        repay_type_code = REPAY_TYPES[self.repay_type.value]
-        repay_type_name = "合并还" if self.repay_type.value == "merge" else "按期还"
-        
-        self._log(f"开始划扣，类型: {repay_type_name}，共 {len(self.loans)} 条")
-        
-        counts = {'success': 0, 'partial': 0, 'processing': 0, 'submitted': 0, 'failed': 0}
-        
-        for i, loan in enumerate(self.loans, 1):
-            fid = loan['funderLoanId']
-            pid = loan['loanProductId']
-            
-            self._update_progress(i, len(self.loans), f"处理中...")
-            
-            try:
-                # 试算
-                trial_resp = self._trial_api(fid, pid, repay_type_code)
-                
-                if trial_resp.get('code') != 0 or not trial_resp.get('data'):
-                    item = {
-                        'funderLoanId': fid,
-                        'loanProductId': pid,
-                        'repayType': repay_type_code,
-                        'status': 'failed',
-                        'amount': None,
-                        'periods': None,
-                        'failReason': f"试算失败: {trial_resp.get('msg', '未知')}"
-                    }
-                    counts['failed'] += 1
-                    self._add_result(item)
-                    continue
-                
-                trail_data = trial_resp['data']
-                amount = trail_data.get('payableTotalAmount')
-                periods = ','.join(str(d['period']) for d in trail_data.get('details', []))
-                
-                # 划扣
-                apply_resp = self._apply_api(fid, pid, repay_type_code, amount, periods)
-                
-                if apply_resp.get('code') != 0:
-                    item = {
-                        'funderLoanId': fid,
-                        'loanProductId': pid,
-                        'repayType': repay_type_code,
-                        'periods': periods,
-                        'amount': amount,
-                        'status': 'failed',
-                        'failReason': f"提交失败: {apply_resp.get('msg', '未知')}"
-                    }
-                    counts['failed'] += 1
-                    self._add_result(item)
-                    continue
-                
-                # 等待并查询
-                self._update_progress(i, len(self.loans), "等待结果...")
-                time.sleep(3)
-                
-                query_resp = self._query_api(fid, pid)
-                
-                if query_resp.get('code') == 0 and query_resp.get('data', {}).get('records'):
-                    record = query_resp['data']['records'][0]
-                    repay_state = record.get('repayState', '')
-                    fail_reason = record.get('failReason', '')
-                    
-                    if repay_state == 'SUCCESS':
-                        status = 'success'
-                    elif repay_state == 'PART_SUCCESS':
-                        status = 'partial'
-                    elif repay_state == 'ING':
-                        status = 'processing'
-                    else:
-                        status = 'failed'
-                    
-                    item = {
-                        'funderLoanId': fid,
-                        'loanProductId': pid,
-                        'repayType': repay_type_code,
-                        'periods': periods,
-                        'amount': amount,
-                        'status': status,
-                        'failReason': fail_reason
-                    }
-                else:
-                    item = {
-                        'funderLoanId': fid,
-                        'loanProductId': pid,
-                        'repayType': repay_type_code,
-                        'periods': periods,
-                        'amount': amount,
-                        'status': 'submitted',
-                        'failReason': '已提交，暂未查到'
-                    }
-                
-                counts[item['status']] += 1
-                self._add_result(item)
-                
-            except Exception as ex:
-                item = {
+    def _apply_single_loan(self, loan, repay_type_code):
+        """处理单条借据的划扣（线程安全）"""
+        fid = loan['funderLoanId']
+        pid = loan['loanProductId']
+
+        try:
+            # 试算
+            trial_resp = self._trial_api(fid, pid, repay_type_code)
+
+            if trial_resp.get('code') != 0 or not trial_resp.get('data'):
+                return {
                     'funderLoanId': fid,
                     'loanProductId': pid,
                     'repayType': repay_type_code,
                     'status': 'failed',
                     'amount': None,
                     'periods': None,
-                    'failReason': str(ex)
+                    'failReason': f"试算失败: {trial_resp.get('msg', '未知')}"
                 }
-                counts['failed'] += 1
+
+            trail_data = trial_resp['data']
+            amount = trail_data.get('payableTotalAmount')
+            periods = ','.join(str(d['period']) for d in trail_data.get('details', []))
+
+            # 划扣
+            apply_resp = self._apply_api(fid, pid, repay_type_code, amount, periods)
+
+            if apply_resp.get('code') != 0:
+                return {
+                    'funderLoanId': fid,
+                    'loanProductId': pid,
+                    'repayType': repay_type_code,
+                    'periods': periods,
+                    'amount': amount,
+                    'status': 'failed',
+                    'failReason': f"提交失败: {apply_resp.get('msg', '未知')}"
+                }
+
+            # 等待后查询结果
+            time.sleep(1)
+
+            query_resp = self._query_api(fid, pid)
+
+            if query_resp.get('code') == 0 and query_resp.get('data', {}).get('records'):
+                record = query_resp['data']['records'][0]
+                repay_state = record.get('repayState', '')
+                fail_reason = record.get('failReason', '')
+
+                if repay_state == 'SUCCESS':
+                    status = 'success'
+                elif repay_state == 'PART_SUCCESS':
+                    status = 'partial'
+                elif repay_state == 'ING':
+                    status = 'processing'
+                else:
+                    status = 'failed'
+
+                return {
+                    'funderLoanId': fid,
+                    'loanProductId': pid,
+                    'repayType': repay_type_code,
+                    'periods': periods,
+                    'amount': amount,
+                    'status': status,
+                    'failReason': fail_reason
+                }
+            else:
+                return {
+                    'funderLoanId': fid,
+                    'loanProductId': pid,
+                    'repayType': repay_type_code,
+                    'periods': periods,
+                    'amount': amount,
+                    'status': 'submitted',
+                    'failReason': '已提交，暂未查到'
+                }
+
+        except Exception as ex:
+            return {
+                'funderLoanId': fid,
+                'loanProductId': pid,
+                'repayType': repay_type_code,
+                'status': 'failed',
+                'amount': None,
+                'periods': None,
+                'failReason': str(ex)
+            }
+
+    def _run_apply(self):
+        """执行划扣（10条并发）"""
+        self.is_running = True
+        self._clear_results()
+
+        repay_type_code = REPAY_TYPES[self.repay_type.value]
+        repay_type_name = "合并还" if self.repay_type.value == "merge" else "按期还"
+        total = len(self.loans)
+
+        self._log(f"开始划扣，类型: {repay_type_name}，共 {total} 条，10条并发")
+
+        counts = {'success': 0, 'partial': 0, 'processing': 0, 'submitted': 0, 'failed': 0}
+        completed = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            # 提交所有任务
+            future_to_loan = {
+                executor.submit(self._apply_single_loan, loan, repay_type_code): loan
+                for loan in self.loans
+            }
+
+            # 收集结果
+            for future in concurrent.futures.as_completed(future_to_loan):
+                item = future.result()
+                counts[item['status']] += 1
+                completed += 1
+
+                self._update_progress(completed, total, f"已完成 {completed}/{total}")
                 self._add_result(item)
-            
-            if i < len(self.loans):
-                time.sleep(1)
-        
+
         self._update_progress(0, 0)
-        
+
         result_msg = "划扣完成: "
         for status, count in counts.items():
             if count > 0:
                 result_msg += f"{status}={count} "
         self._log(result_msg)
-        
+
         self.is_running = False
     
     def _apply_click(self, e):
