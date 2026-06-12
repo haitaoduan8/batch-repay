@@ -21,20 +21,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install flet flet-desktop requests certifi
+          pip install flet requests
 
-      - name: Build EXE with flet pack
+      - name: Build Windows app
         run: |
-          flet pack --name BatchRepay --onefile --windowed batch_repay_app.py
+          flet build windows --project-name BatchRepay
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: BatchRepay-Windows
-          path: dist/BatchRepay.exe
+          path: build/windows/**
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/BatchRepay.exe
+          files: build/windows/**/*.exe

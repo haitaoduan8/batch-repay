@@ -1,0 +1,19 @@
+[project]
+name = "batch-repay"
+version = "1.0.0"
+description = "批量还款划扣工具"
+requires-python = ">=3.11"
+dependencies = [
+    "flet",
+    "requests",
+]
+
+[tool.flet]
+org = "com.batchrepay"
+product = "BatchRepay"
+company = "BatchRepay"
+copyright = "Copyright (c) 2026 BatchRepay"
+
+[tool.flet.app]
+path = "batch_repay_app.py"
+module = "batch_repay_app"
