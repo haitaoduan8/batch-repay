@@ -10,9 +10,15 @@ import certifi
 from datetime import datetime
 from pathlib import Path
 
-# PyInstaller 打包后 SSL 证书路径修复
+# PyInstaller 打包后修复
 if getattr(sys, 'frozen', False):
+    # SSL 证书路径修复
     os.environ['SSL_CERT_FILE'] = os.path.join(sys._MEIPASS, 'certifi', 'cacert.pem')
+    # --windowed 模式下 stdout/stderr 为 None，修复 uvicorn logging 崩溃
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
 
 # ============ 配置 ============
 BASE_URL = "https://cs.cjfintech.com/api"
