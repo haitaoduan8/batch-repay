@@ -4,8 +4,15 @@ import json
 import csv
 import time
 import threading
+import os
+import sys
+import certifi
 from datetime import datetime
 from pathlib import Path
+
+# PyInstaller 打包后 SSL 证书路径修复
+if getattr(sys, 'frozen', False):
+    os.environ['SSL_CERT_FILE'] = os.path.join(sys._MEIPASS, 'certifi', 'cacert.pem')
 
 # ============ 配置 ============
 BASE_URL = "https://cs.cjfintech.com/api"

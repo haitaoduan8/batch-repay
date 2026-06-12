@@ -21,11 +21,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pyinstaller flet flet-desktop requests
+          pip install pyinstaller flet flet-desktop requests certifi
 
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "BatchRepay" --icon=NONE --hidden-import flet.desktop batch_repay_app.py
+          $CERT_PATH = python -c "import certifi; print(certifi.where())"
+          pyinstaller --onefile --windowed --name "BatchRepay" --icon=NONE --hidden-import flet.desktop --add-data "$CERT_PATH;certifi" batch_repay_app.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
