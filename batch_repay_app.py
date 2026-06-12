@@ -93,7 +93,12 @@ class BatchRepayApp:
                 ft.DataColumn(ft.Text("原因", color="white"))
             ],
             rows=[],
-            border=ft.border.all(1, "#333333"),
+            border=ft.Border(
+                top=ft.BorderSide(width=1, color="#333333"),
+                right=ft.BorderSide(width=1, color="#333333"),
+                bottom=ft.BorderSide(width=1, color="#333333"),
+                left=ft.BorderSide(width=1, color="#333333")
+            ),
             heading_row_color="#1e1e1e"
         )
         
