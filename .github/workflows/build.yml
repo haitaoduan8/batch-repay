@@ -24,7 +24,10 @@ jobs:
           pip install flet requests
 
       - name: Build Windows app
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
+          chcp 65001
           flet build windows
 
       - name: Upload artifact
